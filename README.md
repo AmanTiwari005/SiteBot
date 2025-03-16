@@ -1,42 +1,101 @@
-# SiteBot - Chat with Websites
+# 🤖 SiteBot: Chat with Websites
 
-A Streamlit application that allows you to interact with website content using conversational AI. By inputting a website URL, the app retrieves its content, processes it into manageable chunks, and enables you to ask questions or have a conversation based on the website's content.
+[![Python](https://img.shields.io/badge/Python-3.8%2B-blue)](https://www.python.org/)
+[![Streamlit](https://img.shields.io/badge/Streamlit-1.30.0-FF4B4B)](https://streamlit.io/)
+[![Groq](https://img.shields.io/badge/Groq-LLaMa--3.3--70B-green)](https://groq.com/)
+[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## Features
+## 🚀 Overview
 
-- **Conversational Interface**: Chat with website content using a user-friendly interface.
-- **GROQ-powered LLM**: Utilizes the `llama-3.3-70b-versatile` model via the GROQ API for intelligent responses.
-- **Dynamic Context Retrieval**: Employs a history-aware retriever chain to maintain contextual conversation.
-- **Website Content Parsing**: Extracts and processes content from websites using `WebBaseLoader`.
-- **Embeddings with HuggingFace**: Leverages `HuggingFaceInstructEmbeddings` for semantic search and context.
+SiteBot is an AI-powered chatbot that allows you to have natural conversations with any website. Simply enter a URL, and SiteBot will scrape the content, process it, and enable you to ask questions about the website's information. Built with Streamlit, LangChain, and Groq's LLaMa 3.3 model.
 
-## Installation
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/yourusername/chat-with-websites.git
-   cd chat-with-websites
-2. **Set up a virtual environment (optional)**:
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\\Scripts\\activate
-3. **Install dependencies**:
-   ```bash
-   pip install -r requirements.txt
-4. **Set up environment variables**: Create a .env file in the root directory and add your GROQ API key:
-   ```bash
-   GROQ_API_KEY=your_groq_api_key_here
-   
-## Usage
-1. **Run the application**:
-   ```bash
-   streamlit run app.py
-2.  **Access the app**:Open your browser and navigate to *http://localhost:8501*.
-3. **Chat with a website**:
-   - Enter a website URL in the sidebar.
-   - Type your queries in the chat box to interact with the website content.
-  
-## Future Enhancements
-   - Future Enhancements
-   - Add support for handling multiple URLs.
-   - Enable conversational memory persistence across sessions.
-   - Enhance error handling for unsupported or inaccessible websites.
+![SiteBot Demo](https://raw.githubusercontent.com/yourusername/sitebot/main/demo.png)
+
+## ✨ Features
+
+- 🌐 **Website Scraping**: Extract content from any website URL
+- 🔍 **Semantic Search**: Find relevant information using vector embeddings
+- 💬 **Conversational AI**: Chat naturally with the website content
+- 🧠 **Context-Aware**: Maintains conversation history for coherent responses
+- ⚡ **Fast Processing**: Powered by Groq's LLaMa 3.3 70B model
+
+## 🛠️ Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/sitebot.git
+cd sitebot
+
+# Create and activate virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+```
+
+## 🔑 Environment Setup
+
+1. Create a `.env` file in the project root
+2. Add your Groq API key:
+```
+GROQ_API_KEY=your_groq_api_key_here
+```
+
+## 🚀 Usage
+
+```bash
+streamlit run app.py
+```
+
+Then open your browser and navigate to `http://localhost:8501`
+
+### How to use:
+1. Enter a website URL in the sidebar
+2. Wait for the content to be processed
+3. Start chatting with the website!
+
+## 📋 Requirements
+
+- Python 3.8+
+- Streamlit
+- LangChain
+- Groq API access
+- HuggingFace Transformers
+- Chroma DB
+- dotenv
+
+## 🔄 How It Works
+
+1. **Content Extraction**: Scrapes website content using WebBaseLoader
+2. **Text Processing**: Splits content into manageable chunks
+3. **Embedding Generation**: Creates vector embeddings using HuggingFace's Instruct Embeddings
+4. **Vector Storage**: Stores embeddings in Chroma DB for efficient retrieval
+5. **Conversational Chain**: Uses LangChain to create a conversational RAG (Retrieval Augmented Generation) system
+6. **Response Generation**: Generates contextually relevant responses using Groq's LLaMa 3.3 model
+
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## 📄 License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## 🙏 Acknowledgements
+
+- [Streamlit](https://streamlit.io/) for the web application framework
+- [LangChain](https://www.langchain.com/) for the RAG implementation
+- [Groq](https://groq.com/) for the LLM API
+- [HuggingFace](https://huggingface.co/) for the embedding models
+- [Chroma DB](https://www.trychroma.com/) for vector storage
+
+---
+
+Made with ❤️ by Aman Tiwari
