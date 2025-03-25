@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 
+# Initialize GROQ chat model
 def init_groq_model():
     groq_api_key = os.getenv('GROQ_API_KEY')
     if not groq_api_key:
@@ -33,22 +34,19 @@ def init_groq_model():
         )
     except Exception as e:
         logger.error(f"Failed to initialize Groq model: {str(e)}")
-        # Fallback to OpenAI if Groq fails
-        openai_api_key = os.getenv('OPENAI_API_KEY')
-        if openai_api_key:
-            logger.info("Falling back to OpenAI model.")
-            from langchain_openai import ChatOpenAI
-            return ChatOpenAI(
-                openai_api_key=openai_api_key,
-                model_name="gpt-3.5-turbo",
-                temperature=0.5
-            )
-        else:
-            raise
+        raise
+
+# Global model initialization with fallback
+llm_groq = None
+try:
+    llm_groq = init_groq_model()
+except Exception as e:
+    st.error(f"Error initializing Groq model: {str(e)}. Please check your API key or contact Groq support.")
+    logger.error(f"Model initialization failed: {str(e)}")
 
 def get_vectorstore_from_url(url):
     try:
-        # Get the text in document form
+        # Load content from the URL
         loader = WebBaseLoader(url)
         document = loader.load()
         if not document:
@@ -60,7 +58,7 @@ def get_vectorstore_from_url(url):
         document_chunks = text_splitter.split_documents(document)
         logger.info(f"Document split into {len(document_chunks)} chunks.")
         
-        # Create a vector store from the chunks
+        # Create a vector store
         embeddings = HuggingFaceInstructEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
         vector_store = Chroma.from_documents(document_chunks, embeddings)
         logger.info(f"Vector store created with {vector_store._collection.count()} documents.")
@@ -75,17 +73,20 @@ def get_context_retriever_chain(vector_store):
         logger.error("Vector store is None, cannot create retriever chain.")
         return None
     
-    llm = llm_groq
+    if llm_groq is None:
+        logger.error("Language model (llm_groq) is not initialized.")
+        return None
+    
     retriever = vector_store.as_retriever()
     
     prompt = ChatPromptTemplate.from_messages([
         MessagesPlaceholder(variable_name="chat_history"),
         ("user", "{input}"),
-        ("user", "Given the above conversation, generate a search query to look up in order to get information relevant to the conversation")
+        ("user", "Given the above conversation, generate a search query to look up relevant information.")
     ])
     
     try:
-        retriever_chain = create_history_aware_retriever(llm, retriever, prompt)
+        retriever_chain = create_history_aware_retriever(llm_groq, retriever, prompt)
         return retriever_chain
     except Exception as e:
         logger.error(f"Error creating retriever chain: {str(e)}")
@@ -96,16 +97,18 @@ def get_conversational_rag_chain(retriever_chain):
         logger.error("Retriever chain is None, cannot create RAG chain.")
         return None
     
-    llm = llm_groq
+    if llm_groq is None:
+        logger.error("Language model (llm_groq) is not initialized.")
+        return None
     
     prompt = ChatPromptTemplate.from_messages([
-        ("system", "Answer the user's questions based on the below context:\n\n{context}"),
+        ("system", "Answer based on the context:\n\n{context}"),
         MessagesPlaceholder(variable_name="chat_history"),
         ("user", "{input}"),
     ])
     
     try:
-        stuff_documents_chain = create_stuff_documents_chain(llm, prompt)
+        stuff_documents_chain = create_stuff_documents_chain(llm_groq, prompt)
         return create_retrieval_chain(retriever_chain, stuff_documents_chain)
     except Exception as e:
         logger.error(f"Error creating conversational RAG chain: {str(e)}")
@@ -117,11 +120,11 @@ def get_response(user_input):
     
     retriever_chain = get_context_retriever_chain(st.session_state.vector_store)
     if not retriever_chain:
-        return "Error: Failed to create retriever chain."
+        return "Error: Failed to create retriever chain. Check logs for details."
     
     conversation_rag_chain = get_conversational_rag_chain(retriever_chain)
     if not conversation_rag_chain:
-        return "Error: Failed to create conversation chain."
+        return "Error: Failed to create conversation chain. Check logs for details."
     
     try:
         response = conversation_rag_chain.invoke({
@@ -141,7 +144,7 @@ st.title("SiteBot - Chat with Websites")
 # Sidebar
 with st.sidebar:
     st.header("Settings")
-    website_url = st.text_input("Website URL")
+    website_url = st.text_input("Website URL", value="https://www.amazon.in/s?k=trimmer+men+beard&crid=2LNRNO40LXEZT&sprefix=%2Caps%2C266&ref=nb_sb_ss_recent_1_0_recent")
 
 # Main logic
 if not website_url:
