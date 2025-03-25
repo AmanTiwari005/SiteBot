@@ -19,7 +19,6 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 
-# Initialize GROQ chat model
 def init_groq_model():
     groq_api_key = os.getenv('GROQ_API_KEY')
     if not groq_api_key:
@@ -34,14 +33,18 @@ def init_groq_model():
         )
     except Exception as e:
         logger.error(f"Failed to initialize Groq model: {str(e)}")
-        raise
-
-# Initialize the model once globally
-try:
-    llm_groq = init_groq_model()
-except Exception as e:
-    st.error(f"Error initializing model: {str(e)}")
-    llm_groq = None
+        # Fallback to OpenAI if Groq fails
+        openai_api_key = os.getenv('OPENAI_API_KEY')
+        if openai_api_key:
+            logger.info("Falling back to OpenAI model.")
+            from langchain_openai import ChatOpenAI
+            return ChatOpenAI(
+                openai_api_key=openai_api_key,
+                model_name="gpt-3.5-turbo",
+                temperature=0.5
+            )
+        else:
+            raise
 
 def get_vectorstore_from_url(url):
     try:
