@@ -4,135 +4,156 @@ from langchain_community.document_loaders import WebBaseLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from langchain_community.embeddings import HuggingFaceInstructEmbeddings
-from dotenv import load_dotenv
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.chains import create_history_aware_retriever, create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_groq import ChatGroq
+from dotenv import load_dotenv
 import os
 import logging
+from typing import Optional
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
-# Load environment variables
-load_dotenv()
+# Constants
+EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+GROQ_MODEL = "llama-3.3-70b-versatile"
 
-# Initialize GROQ chat model
-def init_groq_model():
-    groq_api_key = os.getenv('GROQ_API_KEY')
-    if not groq_api_key:
-        logger.error("GROQ_API_KEY not found in environment variables.")
-        raise ValueError("GROQ_API_KEY not found in environment variables.")
-    logger.info("GROQ_API_KEY loaded successfully.")
-    try:
-        return ChatGroq(
-            groq_api_key=groq_api_key,
-            model_name="llama-3.3-70b-versatile",
-            temperature=0.5
-        )
-    except Exception as e:
-        logger.error(f"Failed to initialize Groq model: {str(e)}")
-        raise
+class SiteBot:
+    def __init__(self):
+        """Initialize SiteBot with environment variables and model."""
+        load_dotenv()
+        self.llm_groq = self._init_groq_model()
+        self._configure_streamlit()
 
-# Global model initialization with fallback
-llm_groq = None
-try:
-    llm_groq = init_groq_model()
-except Exception as e:
-    st.error(f"Error initializing Groq model: {str(e)}. Please check your API key or contact Groq support.")
-    logger.error(f"Model initialization failed: {str(e)}")
-
-def get_vectorstore_from_url(url):
-    # get the text in document form
-    loader = WebBaseLoader(url)
-    document = loader.load()
-    
-    # split the document into chunks
-    text_splitter = RecursiveCharacterTextSplitter()
-    document_chunks = text_splitter.split_documents(document)
-    
-    # create a vectorstore from the chunks
-    embeddings = HuggingFaceInstructEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-    vector_store = Chroma.from_documents(document_chunks, embeddings)
-
-    return vector_store
-
-def get_context_retriever_chain(vector_store):
-    llm = llm_groq
-    
-    retriever = vector_store.as_retriever()
-    
-    prompt = ChatPromptTemplate.from_messages([
-      MessagesPlaceholder(variable_name="chat_history"),
-      ("user", "{input}"),
-      ("user", "Given the above conversation, generate a search query to look up in order to get information relevant to the conversation")
-    ])
-    
-    retriever_chain = create_history_aware_retriever(llm, retriever, prompt)
-    
-    return retriever_chain
-    
-def get_conversational_rag_chain(retriever_chain): 
-    
-    llm = llm_groq
-    
-    prompt = ChatPromptTemplate.from_messages([
-      ("system", "Answer the user's questions based on the below context:\n\n{context}"),
-      MessagesPlaceholder(variable_name="chat_history"),
-      ("user", "{input}"),
-    ])
-    
-    stuff_documents_chain = create_stuff_documents_chain(llm,prompt)
-    
-    return create_retrieval_chain(retriever_chain, stuff_documents_chain)
-
-def get_response(user_input):
-    retriever_chain = get_context_retriever_chain(st.session_state.vector_store)
-    conversation_rag_chain = get_conversational_rag_chain(retriever_chain)
-    
-    response = conversation_rag_chain.invoke({
-        "chat_history": st.session_state.chat_history,
-        "input": user_input
-    })
-    
-    return response['answer']
-
-# app config
-st.set_page_config(page_title="SiteBot - Chat with Websites", page_icon="🤖")
-st.title("SiteBot  - Chat with Websites")
-
-# sidebar
-with st.sidebar:
-    st.header("Settings")
-    website_url = st.text_input("Website URL")
-
-if website_url is None or website_url == "":
-    st.info("Please enter a website URL")
-
-else:
-    # session state
-    if "chat_history" not in st.session_state:
-        st.session_state.chat_history = [
-            AIMessage(content="Hello, I am a bot. How can I help you?"),
-        ]
-    if "vector_store" not in st.session_state:
-        st.session_state.vector_store = get_vectorstore_from_url(website_url)    
-
-    # user input
-    user_query = st.chat_input("Type your message here...")
-    if user_query is not None and user_query != "":
-        response = get_response(user_query)
-        st.session_state.chat_history.append(HumanMessage(content=user_query))
-        st.session_state.chat_history.append(AIMessage(content=response))
+    def _init_groq_model(self) -> ChatGroq:
+        """Initialize and return the Groq model."""
+        groq_api_key = os.getenv('GROQ_API_KEY')
+        if not groq_api_key:
+            logger.error("GROQ_API_KEY not found in environment variables.")
+            raise ValueError("GROQ_API_KEY is required.")
         
+        try:
+            logger.info("Initializing Groq model...")
+            return ChatGroq(
+                groq_api_key=groq_api_key,
+                model_name=GROQ_MODEL,
+                temperature=0.5
+            )
+        except Exception as e:
+            logger.error(f"Failed to initialize Groq model: {str(e)}")
+            raise
 
-    # conversation
-    for message in st.session_state.chat_history:
-        if isinstance(message, AIMessage):
-            with st.chat_message("AI"):
-                st.write(message.content)
-        elif isinstance(message, HumanMessage):
-            with st.chat_message("Human"):
-                st.write(message.content)
+    def _configure_streamlit(self) -> None:
+        """Configure Streamlit page settings."""
+        st.set_page_config(
+            page_title="SiteBot - Website Chat Interface",
+            page_icon="🤖",
+            layout="wide"
+        )
+        st.title("SiteBot: Intelligent Website Chat")
+
+    def _create_vectorstore(self, url: str) -> Chroma:
+        """Create and return a vector store from a website URL."""
+        try:
+            logger.info(f"Loading content from {url}")
+            loader = WebBaseLoader(url)
+            documents = loader.load()
+
+            text_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=1000,
+                chunk_overlap=200
+            )
+            document_chunks = text_splitter.split_documents(documents)
+
+            embeddings = HuggingFaceInstructEmbeddings(model_name=EMBEDDING_MODEL)
+            return Chroma.from_documents(document_chunks, embeddings)
+        except Exception as e:
+            logger.error(f"Failed to create vector store: {str(e)}")
+            raise
+
+    def _get_context_retriever_chain(self, vector_store: Chroma):
+        """Create and return a context-aware retriever chain."""
+        retriever = vector_store.as_retriever(search_kwargs={"k": 3})
+        
+        prompt = ChatPromptTemplate.from_messages([
+            MessagesPlaceholder(variable_name="chat_history"),
+            ("user", "{input}"),
+            ("user", "Generate a search query based on the conversation to retrieve relevant information.")
+        ])
+        
+        return create_history_aware_retriever(self.llm_groq, retriever, prompt)
+
+    def _get_conversational_rag_chain(self, retriever_chain):
+        """Create and return a conversational RAG chain."""
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", "Provide accurate answers based on this context:\n\n{context}"),
+            MessagesPlaceholder(variable_name="chat_history"),
+            ("user", "{input}"),
+        ])
+        
+        stuff_chain = create_stuff_documents_chain(self.llm_groq, prompt)
+        return create_retrieval_chain(retriever_chain, stuff_chain)
+
+    def get_response(self, user_input: str, vector_store: Chroma) -> str:
+        """Generate a response for the user input."""
+        retriever_chain = self._get_context_retriever_chain(vector_store)
+        rag_chain = self._get_conversational_rag_chain(retriever_chain)
+        
+        try:
+            response = rag_chain.invoke({
+                "chat_history": st.session_state.chat_history,
+                "input": user_input
+            })
+            return response['answer']
+        except Exception as e:
+            logger.error(f"Error generating response: {str(e)}")
+            return "Sorry, I encountered an error. Please try again."
+
+    def run(self) -> None:
+        """Run the SiteBot application."""
+        with st.sidebar:
+            st.header("Configuration")
+            website_url = st.text_input("Enter Website URL", placeholder="https://example.com")
+
+        if not website_url:
+            st.info("Please provide a valid website URL to begin.")
+            return
+
+        # Initialize session state
+        if "chat_history" not in st.session_state:
+            st.session_state.chat_history = [
+                AIMessage(content="Greetings! I'm SiteBot. How may I assist you today?")
+            ]
+        if "vector_store" not in st.session_state:
+            with st.spinner("Processing website content..."):
+                st.session_state.vector_store = self._create_vectorstore(website_url)
+
+        # Chat interface
+        user_query = st.chat_input("Ask me anything about the website...")
+        if user_query:
+            response = self.get_response(user_query, st.session_state.vector_store)
+            st.session_state.chat_history.append(HumanMessage(content=user_query))
+            st.session_state.chat_history.append(AIMessage(content=response))
+
+        # Display conversation
+        for message in st.session_state.chat_history:
+            with st.chat_message("AI" if isinstance(message, AIMessage) else "Human"):
+                st.markdown(message.content)
+
+def main():
+    """Main entry point for the application."""
+    try:
+        bot = SiteBot()
+        bot.run()
+    except Exception as e:
+        st.error(f"An unexpected error occurred: {str(e)}")
+        logger.critical(f"Application failed: {str(e)}")
+
+if __name__ == "__main__":
+    main()
