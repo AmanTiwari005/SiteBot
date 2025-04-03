@@ -144,7 +144,7 @@ st.title("SiteBot - Chat with Websites")
 # Sidebar
 with st.sidebar:
     st.header("Settings")
-    website_url = st.text_input("Website URL", value="https://www.amazon.in/s?k=trimmer+men+beard&crid=2LNRNO40LXEZT&sprefix=%2Caps%2C266&ref=nb_sb_ss_recent_1_0_recent")
+    website_url = st.text_input("Website URL")
 
 # Main logic
 if not website_url:
