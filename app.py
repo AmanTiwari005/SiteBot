@@ -119,13 +119,30 @@ class SiteBot:
         """Run the SiteBot application."""
         with st.sidebar:
             st.header("Configuration")
-            website_url = st.text_input("Enter Website URL", placeholder="https://example.com")
+            website_url = st.text_input("Enter Website URL", placeholder="https://example.com", key="website_url")
+            # Store the previous URL in session state to detect changes
+            if "prev_url" not in st.session_state:
+                st.session_state.prev_url = None
 
         if not website_url:
             st.info("Please provide a valid website URL to begin.")
             return
 
-        # Initialize session state
+        # Check if the URL has changed
+        if st.session_state.prev_url != website_url:
+            with st.spinner("Processing new website content..."):
+                try:
+                    # Update vector store and reset chat history for new URL
+                    st.session_state.vector_store = self._create_vectorstore(website_url)
+                    st.session_state.chat_history = [
+                        AIMessage(content=f"Greetings! I've loaded {website_url}. How may I assist you today?")
+                    ]
+                    st.session_state.prev_url = website_url
+                except Exception as e:
+                    st.error(f"Failed to process the website: {str(e)}")
+                    return
+
+        # Initialize session state if not already done
         if "chat_history" not in st.session_state:
             st.session_state.chat_history = [
                 AIMessage(content="Greetings! I'm SiteBot. How may I assist you today?")
@@ -134,7 +151,7 @@ class SiteBot:
             with st.spinner("Processing website content..."):
                 st.session_state.vector_store = self._create_vectorstore(website_url)
 
-        # Chat interface
+        # Chat环球interface
         user_query = st.chat_input("Ask me anything about the website...")
         if user_query:
             response = self.get_response(user_query, st.session_state.vector_store)
