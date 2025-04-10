@@ -11,7 +11,7 @@ from langchain_groq import ChatGroq
 from dotenv import load_dotenv
 import os
 import logging
-from typing import Optional, Dict, List
+from typing import Dict, List
 
 # Configure logging
 logging.basicConfig(
@@ -23,6 +23,44 @@ logger = logging.getLogger(__name__)
 # Constants
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 GROQ_MODEL = "llama-3.3-70b-versatile"
+
+# Custom CSS for professional styling
+st.markdown("""
+    <style>
+    .stButton>button {
+        border-radius: 8px;
+        background-color: #4CAF50;
+        color: white;
+        padding: 8px 16px;
+    }
+    .stButton>button:hover {
+        background-color: #45a049;
+    }
+    .sidebar .sidebar-content {
+        background-color: #f8f9fa;
+        padding: 20px;
+        border-radius: 10px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .chat-message {
+        padding: 10px;
+        border-radius: 10px;
+        margin: 5px 0;
+        background-color: #f1f3f5;
+    }
+    .ai-message {
+        background-color: #e9ecef;
+    }
+    .url-tag {
+        display: inline-block;
+        background-color: #007bff;
+        color: white;
+        padding: 4px 8px;
+        border-radius: 12px;
+        margin: 2px;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
 class SiteBot:
     def __init__(self):
@@ -53,11 +91,10 @@ class SiteBot:
     def _configure_streamlit(self) -> None:
         """Configure Streamlit page settings."""
         st.set_page_config(
-            page_title="SiteBot - Multi-Website Chat Interface",
+            page_title="SiteBot - Multi-Website Chat",
             page_icon="🤖",
             layout="wide"
         )
-        st.title("SiteBot: Multi-Website Chat")
 
     def _create_vectorstore(self, url: str) -> Chroma:
         """Create and return a vector store from a website URL."""
@@ -107,87 +144,116 @@ class SiteBot:
             return "Please select at least one website to query."
         
         combined_context = ""
-        for url in selected_urls:
-            if url in vector_stores:
-                retriever_chain = self._get_context_retriever_chain(vector_stores[url])
-                rag_chain = self._get_conversational_rag_chain(retriever_chain)
-                try:
-                    response = rag_chain.invoke({
-                        "chat_history": st.session_state.chat_history,
-                        "input": user_input
-                    })
-                    combined_context += f"\n\nFrom {url}:\n{response['answer']}"
-                except Exception as e:
-                    logger.error(f"Error processing {url}: {str(e)}")
-                    combined_context += f"\n\nFrom {url}:\nSorry, I encountered an error."
-            else:
-                combined_context += f"\n\nFrom {url}:\nWebsite not loaded yet."
+        with st.spinner("Generating response..."):
+            for url in selected_urls:
+                if url in vector_stores:
+                    retriever_chain = self._get_context_retriever_chain(vector_stores[url])
+                    rag_chain = self._get_conversational_rag_chain(retriever_chain)
+                    try:
+                        response = rag_chain.invoke({
+                            "chat_history": st.session_state.chat_history,
+                            "input": user_input
+                        })
+                        combined_context += f"\n\n**{url}**:\n{response['answer']}"
+                    except Exception as e:
+                        logger.error(f"Error processing {url}: {str(e)}")
+                        combined_context += f"\n\n**{url}**:\nSorry, I encountered an error."
+                else:
+                    combined_context += f"\n\n**{url}**:\nWebsite not loaded yet."
         
         return combined_context.strip()
 
     def run(self) -> None:
-        """Run the SiteBot application with multi-website support."""
+        """Run the SiteBot application with an enhanced UI."""
+        # Header
+        st.header("🤖 SiteBot: Multi-Website Chat Assistant")
+        st.markdown("Ask questions about multiple websites in one place!")
+
+        # Sidebar
         with st.sidebar:
-            st.header("Configuration")
-            
-            # Manage list of URLs
-            if "website_urls" not in st.session_state:
-                st.session_state.website_urls = []
-            if "vector_stores" not in st.session_state:
-                st.session_state.vector_stores = {}
+            st.markdown("### Website Management")
+            with st.form(key="url_form", clear_on_submit=True):
+                new_url = st.text_input(
+                    "Add a Website URL",
+                    placeholder="https://example.com",
+                    help="Enter a valid URL to load its content."
+                )
+                submit_button = st.form_submit_button(label="Add Website")
 
-            new_url = st.text_input("Add Website URL", placeholder="https://example.com", key="new_url")
-            if st.button("Add Website") and new_url and new_url not in st.session_state.website_urls:
-                with st.spinner(f"Processing {new_url}..."):
-                    try:
-                        st.session_state.vector_stores[new_url] = self._create_vectorstore(new_url)
-                        st.session_state.website_urls.append(new_url)
-                        st.success(f"Added {new_url}")
-                    except Exception as e:
-                        st.error(f"Failed to process {new_url}: {str(e)}")
+            if submit_button and new_url:
+                if new_url not in st.session_state.get("website_urls", []):
+                    with st.spinner(f"Loading {new_url}..."):
+                        try:
+                            st.session_state.setdefault("vector_stores", {})[new_url] = self._create_vectorstore(new_url)
+                            st.session_state.setdefault("website_urls", []).append(new_url)
+                            st.success(f"Successfully loaded {new_url}")
+                        except Exception as e:
+                            st.error(f"Failed to load {new_url}: {str(e)}")
+                else:
+                    st.warning(f"{new_url} is already loaded.")
 
-            # Display and allow removal of URLs
-            if st.session_state.website_urls:
-                st.subheader("Loaded Websites")
-                urls_to_remove = []
-                for url in st.session_state.website_urls:
+            # Display loaded websites
+            if st.session_state.get("website_urls"):
+                st.markdown("#### Loaded Websites")
+                for url in st.session_state.website_urls[:]:
                     col1, col2 = st.columns([3, 1])
-                    col1.write(url)
-                    if col2.button("Remove", key=f"remove_{url}"):
-                        urls_to_remove.append(url)
-                for url in urls_to_remove:
-                    st.session_state.website_urls.remove(url)
-                    st.session_state.vector_stores.pop(url, None)
-                    st.success(f"Removed {url}")
+                    col1.markdown(f"<span class='url-tag'>{url}</span>", unsafe_allow_html=True)
+                    if col2.button("✖", key=f"remove_{url}", help=f"Remove {url}"):
+                        st.session_state.website_urls.remove(url)
+                        st.session_state.vector_stores.pop(url, None)
+                        st.success(f"Removed {url}")
 
-            # Multi-select for querying
+            # Website selection
             selected_urls = st.multiselect(
-                "Select Websites to Query",
-                options=st.session_state.website_urls,
-                default=st.session_state.website_urls
+                "Query These Websites",
+                options=st.session_state.get("website_urls", []),
+                default=st.session_state.get("website_urls", []),
+                help="Select one or more websites to include in your query."
             )
 
-        if not st.session_state.website_urls:
-            st.info("Please add at least one website URL to begin.")
+        # Main content
+        if not st.session_state.get("website_urls"):
+            st.info("Add a website URL in the sidebar to get started.")
             return
 
-        # Initialize chat history
+        # Chat history initialization
         if "chat_history" not in st.session_state:
             st.session_state.chat_history = [
-                AIMessage(content="Greetings! I'm SiteBot. Add websites in the sidebar and ask me anything!")
+                AIMessage(content="Hello! I'm SiteBot, your multi-website assistant. Add websites in the sidebar and ask me anything.")
             ]
 
         # Chat interface
-        user_query = st.chat_input("Ask me anything about the selected websites...")
+        chat_container = st.container()
+        with chat_container:
+            for i, message in enumerate(st.session_state.chat_history):
+                with st.chat_message(
+                    "assistant" if isinstance(message, AIMessage) else "user",
+                    avatar="🤖" if isinstance(message, AIMessage) else "👤"
+                ):
+                    st.markdown(
+                        f"<div class='chat-message {'ai-message' if isinstance(message, AIMessage) else ''}'>{message.content}</div>",
+                        unsafe_allow_html=True
+                    )
+                    if isinstance(message, AIMessage) and i > 0:  # Skip welcome message
+                        if st.button("Copy", key=f"copy_{i}", help="Copy this response"):
+                            st.write(f"Copied: {message.content}")
+
+        # Chat input and clear button
+        col1, col2 = st.columns([5, 1])
+        with col1:
+            user_query = st.chat_input("Ask about the selected websites...")
+        with col2:
+            if st.button("Clear Chat", help="Reset the conversation"):
+                st.session_state.chat_history = [
+                    AIMessage(content="Hello! I'm SiteBot, your multi-website assistant. Add websites in the sidebar and ask me anything.")
+                ]
+                st.experimental_rerun()
+
         if user_query:
             response = self.get_response(user_query, st.session_state.vector_stores, selected_urls)
             st.session_state.chat_history.append(HumanMessage(content=user_query))
             st.session_state.chat_history.append(AIMessage(content=response))
-
-        # Display conversation
-        for message in st.session_state.chat_history:
-            with st.chat_message("AI" if isinstance(message, AIMessage) else "Human"):
-                st.markdown(message.content)
+            st.experimental_rerun()
 
 def main():
     """Main entry point for the application."""
