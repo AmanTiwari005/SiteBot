@@ -12,6 +12,8 @@ from dotenv import load_dotenv
 import os
 import logging
 from typing import Dict, List
+import time
+from requests.exceptions import HTTPError
 
 # Set page config as the first Streamlit command
 st.set_page_config(
@@ -31,40 +33,63 @@ logger = logging.getLogger(__name__)
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
-# Custom CSS for professional styling
+# Custom CSS for improved readability and professional UI
 st.markdown("""
     <style>
+    /* General text and background */
+    body {
+        color: #333333;  /* Dark gray text for readability */
+        background-color: #ffffff;  /* White background */
+    }
     .stButton>button {
         border-radius: 8px;
-        background-color: #4CAF50;
-        color: white;
+        background-color: #007bff;  /* Blue buttons */
+        color: #ffffff;  /* White text on buttons */
         padding: 8px 16px;
+        font-weight: 500;
     }
     .stButton>button:hover {
-        background-color: #45a049;
+        background-color: #0056b3;  /* Darker blue on hover */
     }
     .sidebar .sidebar-content {
-        background-color: #f8f9fa;
+        background-color: #f8f9fa;  /* Light gray sidebar */
         padding: 20px;
         border-radius: 10px;
         box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
+    /* Chat messages */
     .chat-message {
-        padding: 10px;
+        padding: 12px;
         border-radius: 10px;
-        margin: 5px 0;
-        background-color: #f1f3f5;
+        margin: 8px 0;
+        background-color: #f1f3f5;  /* Light gray for user messages */
+        color: #333333;  /* Dark text */
+        font-size: 16px;
     }
     .ai-message {
-        background-color: #e9ecef;
+        background-color: #e9ecef;  /* Slightly darker gray for AI messages */
     }
+    /* URL tags */
     .url-tag {
         display: inline-block;
-        background-color: #007bff;
-        color: white;
-        padding: 4px 8px;
+        background-color: #28a745;  /* Green tags for loaded websites */
+        color: #ffffff;  /* White text */
+        padding: 6px 10px;
         border-radius: 12px;
-        margin: 2px;
+        margin: 4px;
+        font-size: 14px;
+        font-weight: 500;
+    }
+    /* Headers and subheaders */
+    h1, h2, h3, h4 {
+        color: #2c3e50;  /* Dark blue for headers */
+    }
+    /* Input fields */
+    .stTextInput input {
+        background-color: #ffffff;
+        color: #333333;
+        border: 1px solid #ced4da;
+        border-radius: 4px;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -95,23 +120,46 @@ class SiteBot:
             raise
 
     def _create_vectorstore(self, url: str) -> Chroma:
-        """Create and return a vector store from a website URL."""
-        try:
-            logger.info(f"Loading content from {url}")
-            loader = WebBaseLoader(url)
-            documents = loader.load()
+        """Create and return a vector store from a website URL with retry logic."""
+        max_retries = 3
+        retry_delay = 5  # seconds
+        
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"Loading content from {url}")
+                loader = WebBaseLoader(url)
+                documents = loader.load()
 
-            text_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=1000,
-                chunk_overlap=200
-            )
-            document_chunks = text_splitter.split_documents(documents)
+                if not documents:
+                    raise ValueError(f"No content loaded from {url}")
 
-            embeddings = HuggingFaceInstructEmbeddings(model_name=EMBEDDING_MODEL)
-            return Chroma.from_documents(document_chunks, embeddings)
-        except Exception as e:
-            logger.error(f"Failed to create vector store for {url}: {str(e)}")
-            raise
+                text_splitter = RecursiveCharacterTextSplitter(
+                    chunk_size=1000,
+                    chunk_overlap=200
+                )
+                document_chunks = text_splitter.split_documents(documents)
+
+                embeddings = HuggingFaceInstructEmbeddings(
+                    model_name=EMBEDDING_MODEL,
+                    model_kwargs={"device": "cpu"}
+                )
+                return Chroma.from_documents(document_chunks, embeddings)
+
+            except HTTPError as e:
+                if e.response.status_code == 429:
+                    if attempt < max_retries - 1:
+                        logger.warning(f"Rate limit hit for {url}. Retrying in {retry_delay} seconds...")
+                        time.sleep(retry_delay)
+                        continue
+                    else:
+                        logger.error(f"Max retries reached for {url}: {str(e)}")
+                        raise Exception(f"Failed to process {url}: Too many requests to Hugging Face API.")
+                else:
+                    logger.error(f"HTTP error loading {url}: {str(e)}")
+                    raise Exception(f"Failed to load {url}: {str(e)}")
+            except Exception as e:
+                logger.error(f"Failed to create vector store for {url}: {str(e)}")
+                raise
 
     def _get_context_retriever_chain(self, vector_store: Chroma):
         """Create and return a context-aware retriever chain."""
@@ -245,13 +293,13 @@ class SiteBot:
                 st.session_state.chat_history = [
                     AIMessage(content="Hello! I'm SiteBot, your multi-website assistant. Add websites in the sidebar and ask me anything.")
                 ]
-                st.experimental_rerun()
+                st.rerun()
 
         if user_query:
             response = self.get_response(user_query, st.session_state.vector_stores, selected_urls)
             st.session_state.chat_history.append(HumanMessage(content=user_query))
             st.session_state.chat_history.append(AIMessage(content=response))
-            st.experimental_rerun()
+            st.rerun()
 
 def main():
     """Main entry point for the application."""
