@@ -11,7 +11,7 @@ from langchain_groq import ChatGroq
 from dotenv import load_dotenv
 import os
 import logging
-from typing import Optional
+from typing import Optional, Dict, List
 
 # Configure logging
 logging.basicConfig(
@@ -36,6 +36,7 @@ class SiteBot:
         groq_api_key = os.getenv('GROQ_API_KEY')
         if not groq_api_key:
             logger.error("GROQ_API_KEY not found in environment variables.")
+            st.error("Please set your GROQ_API_KEY in the environment.")
             raise ValueError("GROQ_API_KEY is required.")
         
         try:
@@ -52,11 +53,11 @@ class SiteBot:
     def _configure_streamlit(self) -> None:
         """Configure Streamlit page settings."""
         st.set_page_config(
-            page_title="SiteBot - Website Chat Interface",
+            page_title="SiteBot - Multi-Website Chat Interface",
             page_icon="🤖",
             layout="wide"
         )
-        st.title("SiteBot: Intelligent Website Chat")
+        st.title("SiteBot: Multi-Website Chat")
 
     def _create_vectorstore(self, url: str) -> Chroma:
         """Create and return a vector store from a website URL."""
@@ -74,7 +75,7 @@ class SiteBot:
             embeddings = HuggingFaceInstructEmbeddings(model_name=EMBEDDING_MODEL)
             return Chroma.from_documents(document_chunks, embeddings)
         except Exception as e:
-            logger.error(f"Failed to create vector store: {str(e)}")
+            logger.error(f"Failed to create vector store for {url}: {str(e)}")
             raise
 
     def _get_context_retriever_chain(self, vector_store: Chroma):
@@ -100,61 +101,86 @@ class SiteBot:
         stuff_chain = create_stuff_documents_chain(self.llm_groq, prompt)
         return create_retrieval_chain(retriever_chain, stuff_chain)
 
-    def get_response(self, user_input: str, vector_store: Chroma) -> str:
-        """Generate a response for the user input."""
-        retriever_chain = self._get_context_retriever_chain(vector_store)
-        rag_chain = self._get_conversational_rag_chain(retriever_chain)
+    def get_response(self, user_input: str, vector_stores: Dict[str, Chroma], selected_urls: List[str]) -> str:
+        """Generate a response for the user input based on selected websites."""
+        if not selected_urls:
+            return "Please select at least one website to query."
         
-        try:
-            response = rag_chain.invoke({
-                "chat_history": st.session_state.chat_history,
-                "input": user_input
-            })
-            return response['answer']
-        except Exception as e:
-            logger.error(f"Error generating response: {str(e)}")
-            return "Sorry, I encountered an error. Please try again."
+        combined_context = ""
+        for url in selected_urls:
+            if url in vector_stores:
+                retriever_chain = self._get_context_retriever_chain(vector_stores[url])
+                rag_chain = self._get_conversational_rag_chain(retriever_chain)
+                try:
+                    response = rag_chain.invoke({
+                        "chat_history": st.session_state.chat_history,
+                        "input": user_input
+                    })
+                    combined_context += f"\n\nFrom {url}:\n{response['answer']}"
+                except Exception as e:
+                    logger.error(f"Error processing {url}: {str(e)}")
+                    combined_context += f"\n\nFrom {url}:\nSorry, I encountered an error."
+            else:
+                combined_context += f"\n\nFrom {url}:\nWebsite not loaded yet."
+        
+        return combined_context.strip()
 
     def run(self) -> None:
-        """Run the SiteBot application."""
+        """Run the SiteBot application with multi-website support."""
         with st.sidebar:
             st.header("Configuration")
-            website_url = st.text_input("Enter Website URL", placeholder="https://example.com", key="website_url")
-            # Store the previous URL in session state to detect changes
-            if "prev_url" not in st.session_state:
-                st.session_state.prev_url = None
+            
+            # Manage list of URLs
+            if "website_urls" not in st.session_state:
+                st.session_state.website_urls = []
+            if "vector_stores" not in st.session_state:
+                st.session_state.vector_stores = {}
 
-        if not website_url:
-            st.info("Please provide a valid website URL to begin.")
+            new_url = st.text_input("Add Website URL", placeholder="https://example.com", key="new_url")
+            if st.button("Add Website") and new_url and new_url not in st.session_state.website_urls:
+                with st.spinner(f"Processing {new_url}..."):
+                    try:
+                        st.session_state.vector_stores[new_url] = self._create_vectorstore(new_url)
+                        st.session_state.website_urls.append(new_url)
+                        st.success(f"Added {new_url}")
+                    except Exception as e:
+                        st.error(f"Failed to process {new_url}: {str(e)}")
+
+            # Display and allow removal of URLs
+            if st.session_state.website_urls:
+                st.subheader("Loaded Websites")
+                urls_to_remove = []
+                for url in st.session_state.website_urls:
+                    col1, col2 = st.columns([3, 1])
+                    col1.write(url)
+                    if col2.button("Remove", key=f"remove_{url}"):
+                        urls_to_remove.append(url)
+                for url in urls_to_remove:
+                    st.session_state.website_urls.remove(url)
+                    st.session_state.vector_stores.pop(url, None)
+                    st.success(f"Removed {url}")
+
+            # Multi-select for querying
+            selected_urls = st.multiselect(
+                "Select Websites to Query",
+                options=st.session_state.website_urls,
+                default=st.session_state.website_urls
+            )
+
+        if not st.session_state.website_urls:
+            st.info("Please add at least one website URL to begin.")
             return
 
-        # Check if the URL has changed
-        if st.session_state.prev_url != website_url:
-            with st.spinner("Processing new website content..."):
-                try:
-                    # Update vector store and reset chat history for new URL
-                    st.session_state.vector_store = self._create_vectorstore(website_url)
-                    st.session_state.chat_history = [
-                        AIMessage(content=f"Greetings! I've loaded {website_url}. How may I assist you today?")
-                    ]
-                    st.session_state.prev_url = website_url
-                except Exception as e:
-                    st.error(f"Failed to process the website: {str(e)}")
-                    return
-
-        # Initialize session state if not already done
+        # Initialize chat history
         if "chat_history" not in st.session_state:
             st.session_state.chat_history = [
-                AIMessage(content="Greetings! I'm SiteBot. How may I assist you today?")
+                AIMessage(content="Greetings! I'm SiteBot. Add websites in the sidebar and ask me anything!")
             ]
-        if "vector_store" not in st.session_state:
-            with st.spinner("Processing website content..."):
-                st.session_state.vector_store = self._create_vectorstore(website_url)
 
-        # Chat环球interface
-        user_query = st.chat_input("Ask me anything about the website...")
+        # Chat interface
+        user_query = st.chat_input("Ask me anything about the selected websites...")
         if user_query:
-            response = self.get_response(user_query, st.session_state.vector_store)
+            response = self.get_response(user_query, st.session_state.vector_stores, selected_urls)
             st.session_state.chat_history.append(HumanMessage(content=user_query))
             st.session_state.chat_history.append(AIMessage(content=response))
 
