@@ -13,6 +13,13 @@ import os
 import logging
 from typing import Dict, List
 
+# Set page config as the first Streamlit command
+st.set_page_config(
+    page_title="SiteBot - Multi-Website Chat",
+    page_icon="🤖",
+    layout="wide"
+)
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -67,7 +74,6 @@ class SiteBot:
         """Initialize SiteBot with environment variables and model."""
         load_dotenv()
         self.llm_groq = self._init_groq_model()
-        self._configure_streamlit()
 
     def _init_groq_model(self) -> ChatGroq:
         """Initialize and return the Groq model."""
@@ -87,14 +93,6 @@ class SiteBot:
         except Exception as e:
             logger.error(f"Failed to initialize Groq model: {str(e)}")
             raise
-
-    def _configure_streamlit(self) -> None:
-        """Configure Streamlit page settings."""
-        st.set_page_config(
-            page_title="SiteBot - Multi-Website Chat",
-            page_icon="🤖",
-            layout="wide"
-        )
 
     def _create_vectorstore(self, url: str) -> Chroma:
         """Create and return a vector store from a website URL."""
