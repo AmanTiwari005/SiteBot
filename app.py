@@ -133,7 +133,7 @@ class SiteBot:
         self.llm_groq = self._init_groq_model()
 
     @st.cache_resource
-    def _init_embeddings(self):
+    def _init_embeddings(_self):
         """Initialize and cache the embedding model."""
         logger.info("Initializing embedding model...")
         return HuggingFaceInstructEmbeddings(
@@ -142,7 +142,7 @@ class SiteBot:
         )
 
     @st.cache_resource
-    def _init_groq_model(self):
+    def _init_groq_model(_self):
         """Initialize and cache the Groq model."""
         groq_api_key = os.getenv('GROQ_API_KEY')
         if not groq_api_key:
