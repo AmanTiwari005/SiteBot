@@ -1,8 +1,14 @@
-streamlit==1.38.0
-langchain==0.3.1
-langchain-community==0.3.1
-langchain-groq==0.2.0
-chromadb==0.5.5
-sentence-transformers==3.1.1
+langchain==0.1.4
+langchain_community==0.0.16
+langchain_core==0.1.17
+# langchain_openai==0.0.5
 python-dotenv==1.0.1
-beautifulsoup4==4.12.3
+streamlit==1.36.0
+chromadb==0.3.29
+beautifulsoup4==4.12.2
+groq
+langchain-groq
+sentence-transformers==2.2.2
+InstructorEmbedding
+# tiktoken==0.4.0
+huggingface_hub==0.21.4
