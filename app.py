@@ -14,6 +14,7 @@ import logging
 from typing import Dict, List
 import time
 from requests.exceptions import HTTPError
+from datetime import datetime
 
 # Set page config as the first Streamlit command
 st.set_page_config(
@@ -33,66 +34,97 @@ logger = logging.getLogger(__name__)
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
-# Custom CSS for improved readability and professional UI
-st.markdown("""
-    <style>
-    /* General text and background */
-    body {
-        color: #333333;  /* Dark gray text for readability */
-        background-color: #ffffff;  /* White background */
-    }
-    .stButton>button {
-        border-radius: 8px;
-        background-color: #007bff;  /* Blue buttons */
-        color: #ffffff;  /* White text on buttons */
-        padding: 8px 16px;
-        font-weight: 500;
-    }
-    .stButton>button:hover {
-        background-color: #0056b3;  /* Darker blue on hover */
-    }
-    .sidebar .sidebar-content {
-        background-color: #f8f9fa;  /* Light gray sidebar */
-        padding: 20px;
-        border-radius: 10px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }
-    /* Chat messages */
-    .chat-message {
-        padding: 12px;
-        border-radius: 10px;
-        margin: 8px 0;
-        background-color: #f1f3f5;  /* Light gray for user messages */
-        color: #333333;  /* Dark text */
-        font-size: 16px;
-    }
-    .ai-message {
-        background-color: #e9ecef;  /* Slightly darker gray for AI messages */
-    }
-    /* URL tags */
-    .url-tag {
-        display: inline-block;
-        background-color: #28a745;  /* Green tags for loaded websites */
-        color: #ffffff;  /* White text */
-        padding: 6px 10px;
-        border-radius: 12px;
-        margin: 4px;
-        font-size: 14px;
-        font-weight: 500;
-    }
-    /* Headers and subheaders */
-    h1, h2, h3, h4 {
-        color: #2c3e50;  /* Dark blue for headers */
-    }
-    /* Input fields */
-    .stTextInput input {
-        background-color: #ffffff;
-        color: #333333;
-        border: 1px solid #ced4da;
-        border-radius: 4px;
-    }
-    </style>
-""", unsafe_allow_html=True)
+# Custom CSS for enhanced UI
+def get_css(dark_mode: bool = False):
+    base_css = """
+        <style>
+        /* General text and background */
+        body {
+            color: #333333;
+            background-color: #ffffff;
+        }
+        .stButton>button {
+            border-radius: 8px;
+            background-color: #007bff;
+            color: #ffffff;
+            padding: 8px 16px;
+            font-weight: 500;
+        }
+        .stButton>button:hover {
+            background-color: #0056b3;
+        }
+        .sidebar .sidebar-content {
+            background-color: #f8f9fa;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        /* Chat messages */
+        .chat-message.user {
+            padding: 12px;
+            border-radius: 10px;
+            margin: 8px 0;
+            background-color: #007bff;
+            color: #ffffff;
+            font-size: 16px;
+        }
+        .chat-message.ai {
+            padding: 12px;
+            border-radius: 10px;
+            margin: 8px 0;
+            background-color: #28a745;
+            color: #ffffff;
+            font-size: 16px;
+        }
+        .timestamp {
+            font-size: 12px;
+            color: #cccccc;
+            margin-top: 4px;
+        }
+        /* URL tags */
+        .url-tag {
+            display: inline-block;
+            background-color: #28a745;
+            color: #ffffff;
+            padding: 6px 10px;
+            border-radius: 12px;
+            margin: 4px;
+            font-size: 14px;
+            font-weight: 500;
+        }
+        /* Headers and subheaders */
+        h1, h2, h3, h4 {
+            color: #2c3e50;
+        }
+        /* Input fields */
+        .stTextInput input {
+            background-color: #ffffff;
+            color: #333333;
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+        }
+    """
+    dark_mode_css = """
+        body {
+            background-color: #1a1a1a;
+            color: #ffffff;
+        }
+        .sidebar .sidebar-content {
+            background-color: #2c2c2c;
+        }
+        .chat-message.user {
+            background-color: #1e90ff;
+        }
+        .chat-message.ai {
+            background-color: #2ecc71;
+        }
+        .stTextInput input {
+            background-color: #2c2c2c;
+            color: #ffffff;
+            border: 1px solid #555555;
+        }
+    """
+    return base_css + (dark_mode_css if dark_mode else "") + "</style>"
 
 class SiteBot:
     def __init__(self):
@@ -100,8 +132,18 @@ class SiteBot:
         load_dotenv()
         self.llm_groq = self._init_groq_model()
 
-    def _init_groq_model(self) -> ChatGroq:
-        """Initialize and return the Groq model."""
+    @st.cache_resource
+    def _init_embeddings(self):
+        """Initialize and cache the embedding model."""
+        logger.info("Initializing embedding model...")
+        return HuggingFaceInstructEmbeddings(
+            model_name=EMBEDDING_MODEL,
+            model_kwargs={"device": "cpu"}
+        )
+
+    @st.cache_resource
+    def _init_groq_model(self):
+        """Initialize and cache the Groq model."""
         groq_api_key = os.getenv('GROQ_API_KEY')
         if not groq_api_key:
             logger.error("GROQ_API_KEY not found in environment variables.")
@@ -139,10 +181,7 @@ class SiteBot:
                 )
                 document_chunks = text_splitter.split_documents(documents)
 
-                embeddings = HuggingFaceInstructEmbeddings(
-                    model_name=EMBEDDING_MODEL,
-                    model_kwargs={"device": "cpu"}
-                )
+                embeddings = self._init_embeddings()
                 return Chroma.from_documents(document_chunks, embeddings)
 
             except HTTPError as e:
@@ -209,14 +248,30 @@ class SiteBot:
         
         return combined_context.strip()
 
+    def generate_sample_queries(self, urls: List[str]) -> List[str]:
+        """Generate sample queries based on loaded websites."""
+        sample_queries = []
+        for url in urls:
+            sample_queries.append(f"What is the main topic of {url}?")
+            sample_queries.append(f"Summarize the key points from {url}.")
+        return sample_queries[:3]  # Limit to 3 for brevity
+
     def run(self) -> None:
         """Run the SiteBot application with an enhanced UI."""
+        # Dark mode toggle
+        dark_mode = st.checkbox("Dark Mode", value=False, key="dark_mode")
+        st.markdown(get_css(dark_mode), unsafe_allow_html=True)
+
+        # Collapsible sidebar
+        show_sidebar = st.checkbox("Show Sidebar", value=True, key="show_sidebar")
+        sidebar_container = st.sidebar if show_sidebar else st
+
         # Header
         st.header("🤖 SiteBot: Multi-Website Chat Assistant")
         st.markdown("Ask questions about multiple websites in one place!")
 
-        # Sidebar
-        with st.sidebar:
+        # Sidebar content
+        with sidebar_container:
             st.markdown("### Website Management")
             with st.form(key="url_form", clear_on_submit=True):
                 new_url = st.text_input(
@@ -268,16 +323,36 @@ class SiteBot:
                 AIMessage(content="Hello! I'm SiteBot, your multi-website assistant. Add websites in the sidebar and ask me anything.")
             ]
 
+        # Searchable chat history
+        search_query = st.text_input("Search Chat History", placeholder="Type to filter messages...")
+        filtered_history = [
+            msg for msg in st.session_state.chat_history
+            if not search_query.lower() or search_query.lower() in msg.content.lower()
+        ]
+
+        # Sample queries
+        if st.session_state.get("website_urls"):
+            with st.expander("Suggested Questions"):
+                sample_queries = self.generate_sample_queries(st.session_state.website_urls)
+                for query in sample_queries:
+                    if st.button(query, key=f"sample_{query}"):
+                        response = self.get_response(query, st.session_state.vector_stores, selected_urls)
+                        st.session_state.chat_history.append(HumanMessage(content=query))
+                        st.session_state.chat_history.append(AIMessage(content=response))
+                        st.rerun()
+
         # Chat interface
         chat_container = st.container()
         with chat_container:
-            for i, message in enumerate(st.session_state.chat_history):
+            for i, message in enumerate(filtered_history):
                 with st.chat_message(
                     "assistant" if isinstance(message, AIMessage) else "user",
                     avatar="🤖" if isinstance(message, AIMessage) else "👤"
                 ):
+                    timestamp = datetime.now().strftime("%H:%M")
                     st.markdown(
-                        f"<div class='chat-message {'ai-message' if isinstance(message, AIMessage) else ''}'>{message.content}</div>",
+                        f"<div class='chat-message {'ai' if isinstance(message, AIMessage) else 'user'}'>{message.content}</div>"
+                        f"<div class='timestamp'>{timestamp}</div>",
                         unsafe_allow_html=True
                     )
                     if isinstance(message, AIMessage) and i > 0:  # Skip welcome message
