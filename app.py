@@ -1,9 +1,5 @@
 import streamlit as st
 from langchain_core.messages import AIMessage, HumanMessage
-from langchain_community.document_loaders import WebBaseLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import Chroma
-from langchain_community.embeddings import HuggingFaceInstructEmbeddings
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.chains import create_history_aware_retriever, create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
@@ -12,13 +8,23 @@ from dotenv import load_dotenv
 import os
 import logging
 from typing import Dict, List
-import time
-from requests.exceptions import HTTPError
+import numpy as np
+from asgiref.sync import sync_to_async
+import django
+from django.conf import settings
+from django.db.models import Q
+import asyncio
 
-# Set page config as the first Streamlit command
+# Set up Django environment
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "your_project.settings")
+django.setup()
+
+from models import Collection, Document, Page, PageEmbedding  # Import Django models
+
+# Set page config
 st.set_page_config(
-    page_title="SiteBot - Multi-Website Chat",
-    page_icon="🤖",
+    page_title="DocBot - Document Chat",
+    page_icon="📜",
     layout="wide"
 )
 
@@ -30,61 +36,55 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Constants
-EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
-# Custom CSS for improved readability and professional UI
+# Custom CSS
 st.markdown("""
     <style>
-    /* General text and background */
     body {
-        color: #333333;  /* Dark gray text for readability */
-        background-color: #ffffff;  /* White background */
+        color: #333333;
+        background-color: #ffffff;
     }
     .stButton>button {
         border-radius: 8px;
-        background-color: #007bff;  /* Blue buttons */
-        color: #ffffff;  /* White text on buttons */
+        background-color: #007bff;
+        color: #ffffff;
         padding: 8px 16px;
         font-weight: 500;
     }
     .stButton>button:hover {
-        background-color: #0056b3;  /* Darker blue on hover */
+        background-color: #0056b3;
     }
     .sidebar .sidebar-content {
-        background-color: #f8f9fa;  /* Light gray sidebar */
+        background-color: #f8f9fa;
         padding: 20px;
         border-radius: 10px;
         box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
-    /* Chat messages */
     .chat-message {
         padding: 12px;
         border-radius: 10px;
         margin: 8px 0;
-        background-color: #f1f3f5;  /* Light gray for user messages */
-        color: #333333;  /* Dark text */
+        background-color: #f1f3f5;
+        color: #333333;
         font-size: 16px;
     }
     .ai-message {
-        background-color: #e9ecef;  /* Slightly darker gray for AI messages */
+        background-color: #e9ecef;
     }
-    /* URL tags */
-    .url-tag {
+    .doc-tag {
         display: inline-block;
-        background-color: #28a745;  /* Green tags for loaded websites */
-        color: #ffffff;  /* White text */
+        background-color: #28a745;
+        color: #ffffff;
         padding: 6px 10px;
         border-radius: 12px;
         margin: 4px;
         font-size: 14px;
         font-weight: 500;
     }
-    /* Headers and subheaders */
     h1, h2, h3, h4 {
-        color: #2c3e50;  /* Dark blue for headers */
+        color: #2c3e50;
     }
-    /* Input fields */
     .stTextInput input {
         background-color: #ffffff;
         color: #333333;
@@ -94,9 +94,9 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-class SiteBot:
+class DocBot:
     def __init__(self):
-        """Initialize SiteBot with environment variables and model."""
+        """Initialize DocBot with Groq model."""
         load_dotenv()
         self.llm_groq = self._init_groq_model()
 
@@ -104,8 +104,8 @@ class SiteBot:
         """Initialize and return the Groq model."""
         groq_api_key = os.getenv('GROQ_API_KEY')
         if not groq_api_key:
-            logger.error("GROQ_API_KEY not found in environment variables.")
-            st.error("Please set your GROQ_API_KEY in the environment.")
+            logger.error("GROQ_API_KEY not found.")
+            st.error("Please set your GROQ_API_KEY.")
             raise ValueError("GROQ_API_KEY is required.")
         
         try:
@@ -119,64 +119,69 @@ class SiteBot:
             logger.error(f"Failed to initialize Groq model: {str(e)}")
             raise
 
-    def _create_vectorstore(self, url: str) -> Chroma:
-        """Create and return a vector store from a website URL with retry logic."""
-        max_retries = 3
-        retry_delay = 5  # seconds
+    async def _get_similar_pages(self, query: str, document_ids: List[int]) -> List[dict]:
+        """Perform similarity search using PageEmbedding."""
+        # Simulate embedding the query (since models.py uses an external service)
+        # For simplicity, assume query is converted to a 128-dim vector
+        # In practice, you'd call the same embeddings service as in embed_document
+        query_embedding = np.random.rand(128).tolist()  # Placeholder
+
+        pages = await sync_to_async(PageEmbedding.objects.filter)(
+            page__document_id__in=document_ids
+        )
+        pages = await sync_to_async(pages.annotate)(
+            similarity=MaxSim('embedding', query_embedding)
+        )
+        pages = await sync_to_async(pages.order_by)('-similarity')[:3]
         
-        for attempt in range(max_retries):
-            try:
-                logger.info(f"Loading content from {url}")
-                loader = WebBaseLoader(url)
-                documents = loader.load()
+        results = []
+        async for page_embedding in pages:
+            page = await sync_to_async(getattr)(page_embedding, 'page')
+            content = page.content or "Image-based page"
+            results.append({
+                "content": content,
+                "document_name": page.document.name,
+                "page_number": page.page_number,
+                "similarity": page_embedding.similarity
+            })
+        return results
 
-                if not documents:
-                    raise ValueError(f"No content loaded from {url}")
-
-                text_splitter = RecursiveCharacterTextSplitter(
-                    chunk_size=1000,
-                    chunk_overlap=200
-                )
-                document_chunks = text_splitter.split_documents(documents)
-
-                embeddings = HuggingFaceInstructEmbeddings(
-                    model_name=EMBEDDING_MODEL,
-                    model_kwargs={"device": "cpu"}
-                )
-                return Chroma.from_documents(document_chunks, embeddings)
-
-            except HTTPError as e:
-                if e.response.status_code == 429:
-                    if attempt < max_retries - 1:
-                        logger.warning(f"Rate limit hit for {url}. Retrying in {retry_delay} seconds...")
-                        time.sleep(retry_delay)
-                        continue
-                    else:
-                        logger.error(f"Max retries reached for {url}: {str(e)}")
-                        raise Exception(f"Failed to process {url}: Too many requests to Hugging Face API.")
-                else:
-                    logger.error(f"HTTP error loading {url}: {str(e)}")
-                    raise Exception(f"Failed to load {url}: {str(e)}")
-            except Exception as e:
-                logger.error(f"Failed to create vector store for {url}: {str(e)}")
-                raise
-
-    def _get_context_retriever_chain(self, vector_store: Chroma):
-        """Create and return a context-aware retriever chain."""
-        retriever = vector_store.as_retriever(search_kwargs={"k": 3})
-        
+    def _get_context_retriever_chain(self):
+        """Create a history-aware retriever chain."""
         prompt = ChatPromptTemplate.from_messages([
             MessagesPlaceholder(variable_name="chat_history"),
             ("user", "{input}"),
-            ("user", "Generate a search query based on the conversation to retrieve relevant information.")
+            ("user", "Generate a search query based on the conversation.")
         ])
         
+        # Custom retriever to use Django models
+        class DjangoRetriever:
+            def __init__(self, bot, document_ids):
+                self.bot = bot
+                self.document_ids = document_ids
+            
+            async def aget_relevant_documents(self, query):
+                pages = await self.bot._get_similar_pages(query, self.document_ids)
+                from langchain_core.documents import Document
+                return [
+                    Document(
+                        page_content=page["content"],
+                        metadata={
+                            "document_name": page["document_name"],
+                            "page_number": page["page_number"],
+                            "similarity": page["similarity"]
+                        }
+                    )
+                    for page in pages
+                ]
+        
+        retriever = DjangoRetriever(self, st.session_state.get("selected_document_ids", []))
         return create_history_aware_retriever(self.llm_groq, retriever, prompt)
 
     def _get_conversational_rag_chain(self, retriever_chain):
-        """Create and return a conversational RAG chain."""
+        """Create a conversational RAG chain."""
         prompt = ChatPromptTemplate.from_messages([
-            ("system", "Provide accurate answers based on this context:\n\n{context}"),
+            ("system", "Answer based on this context:\n\n{context}"),
             MessagesPlaceholder(variable_name="chat_history"),
             ("user", "{input}"),
         ])
@@ -184,88 +189,90 @@ class SiteBot:
         stuff_chain = create_stuff_documents_chain(self.llm_groq, prompt)
         return create_retrieval_chain(retriever_chain, stuff_chain)
 
-    def get_response(self, user_input: str, vector_stores: Dict[str, Chroma], selected_urls: List[str]) -> str:
-        """Generate a response for the user input based on selected websites."""
-        if not selected_urls:
-            return "Please select at least one website to query."
+    def get_response(self, user_input: str) -> str:
+        """Generate a response based on selected documents."""
+        if not st.session_state.get("selected_document_ids"):
+            return "Please select at least one document to query."
         
-        combined_context = ""
         with st.spinner("Generating response..."):
-            for url in selected_urls:
-                if url in vector_stores:
-                    retriever_chain = self._get_context_retriever_chain(vector_stores[url])
-                    rag_chain = self._get_conversational_rag_chain(retriever_chain)
-                    try:
-                        response = rag_chain.invoke({
-                            "chat_history": st.session_state.chat_history,
-                            "input": user_input
-                        })
-                        combined_context += f"\n\n**{url}**:\n{response['answer']}"
-                    except Exception as e:
-                        logger.error(f"Error processing {url}: {str(e)}")
-                        combined_context += f"\n\n**{url}**:\nSorry, I encountered an error."
-                else:
-                    combined_context += f"\n\n**{url}**:\nWebsite not loaded yet."
-        
-        return combined_context.strip()
+            retriever_chain = self._get_context_retriever_chain()
+            rag_chain = self._get_conversational_rag_chain(retriever_chain)
+            try:
+                response = rag_chain.invoke({
+                    "chat_history": st.session_state.chat_history,
+                    "input": user_input
+                })
+                return response['answer']
+            except Exception as e:
+                logger.error(f"Error processing query: {str(e)}")
+                return f"Sorry, I encountered an error: {str(e)}"
 
-    def run(self) -> None:
-        """Run the SiteBot application with an enhanced UI."""
+    async def run(self) -> None:
+        """Run the DocBot application."""
         # Header
-        st.header("🤖 SiteBot: Multi-Website Chat Assistant")
-        st.markdown("Ask questions about multiple websites in one place!")
+        st.header("📜 DocBot: Document Chat Assistant")
+        st.markdown("Ask questions about your stored documents!")
 
         # Sidebar
         with st.sidebar:
-            st.markdown("### Website Management")
-            with st.form(key="url_form", clear_on_submit=True):
-                new_url = st.text_input(
-                    "Add a Website URL",
-                    placeholder="https://example.com",
-                    help="Enter a valid URL to load its content."
-                )
-                submit_button = st.form_submit_button(label="Add Website")
-
-            if submit_button and new_url:
-                if new_url not in st.session_state.get("website_urls", []):
-                    with st.spinner(f"Loading {new_url}..."):
-                        try:
-                            st.session_state.setdefault("vector_stores", {})[new_url] = self._create_vectorstore(new_url)
-                            st.session_state.setdefault("website_urls", []).append(new_url)
-                            st.success(f"Successfully loaded {new_url}")
-                        except Exception as e:
-                            st.error(f"Failed to load {new_url}: {str(e)}")
-                else:
-                    st.warning(f"{new_url} is already loaded.")
-
-            # Display loaded websites
-            if st.session_state.get("website_urls"):
-                st.markdown("#### Loaded Websites")
-                for url in st.session_state.website_urls[:]:
-                    col1, col2 = st.columns([3, 1])
-                    col1.markdown(f"<span class='url-tag'>{url}</span>", unsafe_allow_html=True)
-                    if col2.button("✖", key=f"remove_{url}", help=f"Remove {url}"):
-                        st.session_state.website_urls.remove(url)
-                        st.session_state.vector_stores.pop(url, None)
-                        st.success(f"Removed {url}")
-
-            # Website selection
-            selected_urls = st.multiselect(
-                "Query These Websites",
-                options=st.session_state.get("website_urls", []),
-                default=st.session_state.get("website_urls", []),
-                help="Select one or more websites to include in your query."
+            st.markdown("### Document Management")
+            
+            # Fetch collections
+            collections = await sync_to_async(list)(
+                Collection.objects.filter(owner__email=st.session_state.get("user_email", "default@domain.com"))
             )
+            
+            if not collections:
+                st.info("No collections found. Please add documents via the Django backend.")
+                return
+            
+            # Collection selection
+            collection_names = [c.name for c in collections]
+            selected_collection = st.selectbox(
+                "Select Collection",
+                options=collection_names,
+                help="Choose a collection to view its documents."
+            )
+            
+            if selected_collection:
+                selected_collection_obj = next(c for c in collections if c.name == selected_collection)
+                # Fetch documents
+                documents = await sync_to_async(list)(
+                    Document.objects.filter(collection=selected_collection_obj)
+                )
+                
+                # Display documents
+                st.markdown("#### Available Documents")
+                for doc in documents:
+                    col1, col2 = st.columns([3, 1])
+                    col1.markdown(f"<span class='doc-tag'>{doc.name}</span>", unsafe_allow_html=True)
+                    if col2.button("✖", key=f"remove_{doc.id}", help=f"Remove {doc.name}"):
+                        await sync_to_async(doc.delete)()
+                        st.success(f"Removed {doc.name}")
+                        st.rerun()
+                
+                # Document selection
+                selected_documents = st.multiselect(
+                    "Query These Documents",
+                    options=[doc.name for doc in documents],
+                    default=[],
+                    help="Select one or more documents to include in your query."
+                )
+                
+                # Update session state with selected document IDs
+                st.session_state.selected_document_ids = [
+                    doc.id for doc in documents if doc.name in selected_documents
+                ]
 
         # Main content
-        if not st.session_state.get("website_urls"):
-            st.info("Add a website URL in the sidebar to get started.")
+        if not collections:
+            st.info("Add documents via the Django backend to get started.")
             return
 
         # Chat history initialization
         if "chat_history" not in st.session_state:
             st.session_state.chat_history = [
-                AIMessage(content="Hello! I'm SiteBot, your multi-website assistant. Add websites in the sidebar and ask me anything.")
+                AIMessage(content="Hello! I'm DocBot, your document assistant. Select documents in the sidebar and ask me anything.")
             ]
 
         # Chat interface
@@ -280,32 +287,35 @@ class SiteBot:
                         f"<div class='chat-message {'ai-message' if isinstance(message, AIMessage) else ''}'>{message.content}</div>",
                         unsafe_allow_html=True
                     )
-                    if isinstance(message, AIMessage) and i > 0:  # Skip welcome message
+                    if isinstance(message, AIMessage) and i > 0:
                         if st.button("Copy", key=f"copy_{i}", help="Copy this response"):
                             st.write(f"Copied: {message.content}")
 
         # Chat input and clear button
         col1, col2 = st.columns([5, 1])
         with col1:
-            user_query = st.chat_input("Ask about the selected websites...")
+            user_query = st.chat_input("Ask about the selected documents...")
         with col2:
             if st.button("Clear Chat", help="Reset the conversation"):
                 st.session_state.chat_history = [
-                    AIMessage(content="Hello! I'm SiteBot, your multi-website assistant. Add websites in the sidebar and ask me anything.")
+                    AIMessage(content="Hello! I'm DocBot, your document assistant. Select documents in the sidebar and ask me anything.")
                 ]
                 st.rerun()
 
         if user_query:
-            response = self.get_response(user_query, st.session_state.vector_stores, selected_urls)
+            response = self.get_response(user_query)
             st.session_state.chat_history.append(HumanMessage(content=user_query))
             st.session_state.chat_history.append(AIMessage(content=response))
             st.rerun()
 
 def main():
-    """Main entry point for the application."""
+    """Main entry point."""
     try:
-        bot = SiteBot()
-        bot.run()
+        bot = DocBot()
+        # Run async function in sync context
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(bot.run())
     except Exception as e:
         st.error(f"An unexpected error occurred: {str(e)}")
         logger.critical(f"Application failed: {str(e)}")
